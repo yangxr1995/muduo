@@ -6,6 +6,9 @@
 
 // Author: Shuo Chen (chenshuo at chenshuo dot com)
 
+#include "muduo/base/Types.h"
+#include <cassert>
+#include <cstring>
 #include <muduo/net/InetAddress.h>
 
 #include <muduo/base/Logging.h>
@@ -14,6 +17,9 @@
 
 #include <netdb.h>
 #include <netinet/in.h>
+#include <string>
+#include <sys/socket.h>
+#include <unistd.h>
 
 // INADDR_ANY use (type)value casting.
 #pragma GCC diagnostic ignored "-Wold-style-cast"
@@ -45,18 +51,28 @@ static const in_addr_t kInaddrLoopback = INADDR_LOOPBACK;
 using namespace muduo;
 using namespace muduo::net;
 
-static_assert(sizeof(InetAddress) == sizeof(struct sockaddr_in6),
-              "InetAddress is same size as sockaddr_in6");
+// static_assert(sizeof(InetAddress) == sizeof(struct sockaddr_in6),
+//               "InetAddress is same size as sockaddr_in6");
 static_assert(offsetof(sockaddr_in, sin_family) == 0, "sin_family offset 0");
 static_assert(offsetof(sockaddr_in6, sin6_family) == 0, "sin6_family offset 0");
 static_assert(offsetof(sockaddr_in, sin_port) == 2, "sin_port offset 2");
 static_assert(offsetof(sockaddr_in6, sin6_port) == 2, "sin6_port offset 2");
 
-InetAddress::InetAddress(uint16_t port, bool loopbackOnly, bool ipv6)
+static const std::string defaultUnixSocketPath = "/tmp/muduo.sock";
+
+InetAddress::InetAddress(uint16_t port, bool loopbackOnly, bool ipv6, bool local)
 {
   static_assert(offsetof(InetAddress, addr6_) == 0, "addr6_ offset 0");
   static_assert(offsetof(InetAddress, addr_) == 0, "addr_ offset 0");
-  if (ipv6)
+  static_assert(offsetof(InetAddress, addrUn_) == 0, "addrUn_ offset 0");
+
+  if (local) {
+      ::unlink(defaultUnixSocketPath.c_str());
+      memZero(&addrUn_, sizeof(addrUn_));
+      addrUn_.sun_family = AF_UNIX;
+      strncpy(addrUn_.sun_path, defaultUnixSocketPath.c_str(), sizeof(addrUn_.sun_path) - 1);
+  }
+  else if (ipv6)
   {
     memZero(&addr6_, sizeof addr6_);
     addr6_.sin6_family = AF_INET6;
@@ -74,9 +90,15 @@ InetAddress::InetAddress(uint16_t port, bool loopbackOnly, bool ipv6)
   }
 }
 
-InetAddress::InetAddress(StringArg ip, uint16_t port, bool ipv6)
+InetAddress::InetAddress(StringArg ip, uint16_t port, bool ipv6, bool local)
 {
-  if (ipv6)
+  if (local) {
+      unlink(ip.c_str());
+      memZero(&addrUn_, sizeof(addrUn_));
+      addrUn_.sun_family = AF_UNIX;
+      strncpy(addrUn_.sun_path, ip.c_str(), sizeof(addrUn_.sun_path) - 1);
+  }
+  else if (ipv6)
   {
     memZero(&addr6_, sizeof addr6_);
     sockets::fromIpPort(ip.c_str(), port, &addr6_);
@@ -91,12 +113,18 @@ InetAddress::InetAddress(StringArg ip, uint16_t port, bool ipv6)
 string InetAddress::toIpPort() const
 {
   char buf[64] = "";
+  if (family() == AF_UNIX) {
+      return "unix";
+  }
   sockets::toIpPort(buf, sizeof buf, getSockAddr());
   return buf;
 }
 
 string InetAddress::toIp() const
 {
+  if (family() == AF_UNIX) {
+      return "unix";
+  }
   char buf[64] = "";
   sockets::toIp(buf, sizeof buf, getSockAddr());
   return buf;
@@ -104,12 +132,16 @@ string InetAddress::toIp() const
 
 uint32_t InetAddress::ipNetEndian() const
 {
+  assert(addr_.family != AF_UNIX);
   assert(family() == AF_INET);
   return addr_.sin_addr.s_addr;
 }
 
 uint16_t InetAddress::toPort() const
 {
+  if (family() == AF_UNIX) {
+      return 0;
+  }
   return sockets::networkToHost16(portNetEndian());
 }
 
@@ -117,6 +149,7 @@ static __thread char t_resolveBuffer[64 * 1024];
 
 bool InetAddress::resolve(StringArg hostname, InetAddress* out)
 {
+  assert(addr_.family != AF_UNIX);
   assert(out != NULL);
   struct hostent hent;
   struct hostent* he = NULL;

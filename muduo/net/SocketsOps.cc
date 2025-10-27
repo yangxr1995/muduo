@@ -18,6 +18,7 @@
 #include <sys/socket.h>
 #include <sys/uio.h>  // readv
 #include <unistd.h>
+#include <sys/un.h>
 
 using namespace muduo;
 using namespace muduo::net;
@@ -48,6 +49,16 @@ void setNonBlockAndCloseOnExec(int sockfd)
 #endif
 
 }  // namespace
+
+const struct sockaddr* sockets::sockaddr_cast(const struct sockaddr_un* addr)
+{
+  return static_cast<const struct sockaddr*>(implicit_cast<const void*>(addr));
+}
+
+struct sockaddr* sockets::sockaddr_cast(struct sockaddr_un* addr)
+{
+  return static_cast<struct sockaddr*>(implicit_cast<void*>(addr));
+}
 
 const struct sockaddr* sockets::sockaddr_cast(const struct sockaddr_in6* addr)
 {
@@ -85,7 +96,7 @@ int sockets::createNonblockingOrDie(sa_family_t family)
 
   setNonBlockAndCloseOnExec(sockfd);
 #else
-  int sockfd = ::socket(family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_TCP);
+  int sockfd = ::socket(family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
   if (sockfd < 0)
   {
     LOG_SYSFATAL << "sockets::createNonblockingOrDie";
@@ -156,8 +167,12 @@ int sockets::accept(int sockfd, struct sockaddr_in6* addr)
   return connfd;
 }
 
+static struct sockaddr_un tmp;
 int sockets::connect(int sockfd, const struct sockaddr* addr)
 {
+  if (addr->sa_family == AF_UNIX) {
+      return ::connect(sockfd, addr, static_cast<socklen_t>(sizeof(tmp)));
+  }
   return ::connect(sockfd, addr, static_cast<socklen_t>(sizeof(struct sockaddr_in6)));
 }
 

@@ -47,6 +47,8 @@ void fromIpPort(const char* ip, uint16_t port,
 
 int getSocketError(int sockfd);
 
+struct sockaddr* sockaddr_cast(struct sockaddr_un* addr);
+const struct sockaddr* sockaddr_cast(const struct sockaddr_un* addr);
 const struct sockaddr* sockaddr_cast(const struct sockaddr_in* addr);
 const struct sockaddr* sockaddr_cast(const struct sockaddr_in6* addr);
 struct sockaddr* sockaddr_cast(struct sockaddr_in6* addr);
